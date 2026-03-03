@@ -11,3 +11,9 @@ this paper solves four major problems -
 3. when a request is completed, it needs to be recycled to bring in a new request.
 
 4. to batch uneven request lengths so attention can be computed properly. yes we can pad, but wastes resources.
+
+
+ORCA proposes -
+
+1. iterative/continous batching - batching to add in new requests during a batch and exit a request when its done without waiting for the batch to be done. 
+2. selective attention - concat all the requests for linear passes, since the token interaction doesnot matter. for attention, split each request across the batch, perform attention and then concat them later. this way we make use of maximum computation. 
