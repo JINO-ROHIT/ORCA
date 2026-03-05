@@ -19,6 +19,7 @@ from models.utils import KVCache
 
 @dataclass
 class Request:
+    id: int = 0
     prompt: str = ""
     max_length: int = 2048
     tokens: List[int] = field(default_factory = list)
@@ -27,8 +28,11 @@ class Request:
     is_prefill: bool = True # do we need this or nah?
 
 class Server:
+    MAX_BATCH_SIZE = 10
+
     def __init__(self):
         self.pool = Queue()
+        self.current_batch = []
 
         self._load_model()
         print("model loaded")
@@ -48,26 +52,64 @@ class Server:
             add_thinking = False
         )
     
+    def _tokenizer_decode(self, request: Request):
+        for token in request.tokens:
+            print(f"{request.id} - {self.tokenizer.decode([token])}")
+    
     def add_request(self, request: Request):
+        """adds a request in the pool"""
         self.pool.put(request)
+    
+    def prefill(self, request: Request):
+        """this performs the prefill stage"""
+        token_ids = self.tokenizer.encode(request.prompt)
+        token_ids = torch.tensor(token_ids, device = "cuda").unsqueeze(0)
+        logits = self.model(token_ids, cache = request.kv_cache)
+
+        next_token = torch.argmax(logits[:, -1], dim = -1, keepdim = True)
+        token = next_token.item()
+
+        request.tokens.append(token)
+
+        request.is_prefill = False
+
+        self._tokenizer_decode(request)
+
+        if token in [151645, 151643] or len(request.tokens) >= request.max_length:
+            request.is_completed = True
+
+    def decode(self, request: Request):
+        """this performs one step of decode, feed only the last token and the cache handles history"""
+        logits = self.model(request.tokens[-1], cache = request.kv_cache)
+
+        next_token = torch.argmax(logits[:, -1], dim = -1, keepdim = True)
+        token = next_token.item()
+
+        request.tokens.append(token)
+
+        self._tokenizer_decode(request)
+
+        if token in [151645, 151643] or len(request.tokens) >= request.max_length:
+            request.is_completed = True
+
 
     def serve(self):
 
-        while self.pool.empty() is False:
+        while self.pool.empty() is False and len(self.current_batch) > 1:
             request = self.pool.get()
 
-            token_ids = self.tokenizer.encode(request.prompt)
-            token_ids = torch.tensor(token_ids, device = "cuda").unsqueeze(0)
-            logits = self.model(token_ids, cache = request.kv_cache)
+            if len(self.current_batch) < Server.MAX_BATCH_SIZE:
+                self.current_batch.append(request)
+            
 
-            next_token = torch.argmax(logits[:, -1], dim = -1, keepdim = True)
-            token = next_token.item()
+            for request in self.current_batch:
+                if request.is_completed:
+                    self.current_batch.remove(request)
 
-            request.tokens.append(token)
-
-            if token in [151645, 151643] or len(request.tokens) >= request.max_length:
-                request.is_completed = True
-                print(self.tokenizer.decode(torch.tensor(request.tokens)))
+                if request.is_prefill:
+                    self.prefill(request)
+                else:
+                    self.decode(request)
         
         print("done serving all requests")
         
