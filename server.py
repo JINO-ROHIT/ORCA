@@ -21,9 +21,9 @@ from models.utils import KVCache
 class Request:
     id: int = 0
     prompt: str = ""
-    max_length: int = 2048
+    max_length: int = 100
     tokens: List[int] = field(default_factory = list)
-    kv_cache: KVCache = KVCache(n_layers = QWEN3_0_6B["n_layers"])
+    kv_cache: KVCache = field(default_factory = lambda: KVCache(n_layers = QWEN3_0_6B["n_layers"])) 
     is_completed: bool = False
     is_prefill: bool = True # do we need this or nah?
 
@@ -37,6 +37,16 @@ class Server:
         self._load_model()
         print("model loaded")
     
+    def _print_batch_state(self):
+        if hasattr(self, '_last_print_lines') and self._last_print_lines > 0:
+            print(f"\033[{self._last_print_lines}A", end="")
+
+        for request in self.current_batch:
+            decoded = self.tokenizer.decode(request.tokens)
+            print(f"[req {request.id}] {request.prompt}{decoded}\033[K")  # \033[K clears rest of line
+        
+        self._last_print_lines = len(self.current_batch)
+
     def _load_model(self):
         self.model = Qwen3Model(QWEN3_0_6B)
         self.model.eval()
@@ -52,9 +62,9 @@ class Server:
             add_thinking = False
         )
     
-    def _tokenizer_decode(self, request: Request):
-        for token in request.tokens:
-            print(f"{request.id} - {self.tokenizer.decode([token])}")
+    # def _tokenizer_decode(self, request: Request):
+    #     for token in request.tokens:
+    #         print(f"request {request.id} generated: {request.prompt} {self.tokenizer.decode([token])} \n")
     
     def add_request(self, request: Request):
         """adds a request in the pool"""
@@ -73,50 +83,54 @@ class Server:
 
         request.is_prefill = False
 
-        self._tokenizer_decode(request)
+        # self._tokenizer_decode(request)
 
         if token in [151645, 151643] or len(request.tokens) >= request.max_length:
             request.is_completed = True
 
     def decode(self, request: Request):
         """this performs one step of decode, feed only the last token and the cache handles history"""
-        logits = self.model(request.tokens[-1], cache = request.kv_cache)
+        logits = self.model(torch.tensor(request.tokens[-1], device = "cuda").unsqueeze(0).unsqueeze(0), cache = request.kv_cache)
 
         next_token = torch.argmax(logits[:, -1], dim = -1, keepdim = True)
         token = next_token.item()
 
         request.tokens.append(token)
 
-        self._tokenizer_decode(request)
+        # self._tokenizer_decode(request)
 
         if token in [151645, 151643] or len(request.tokens) >= request.max_length:
             request.is_completed = True
+    
+    def _get_next_batch(self):
+        self.current_batch = [_req for _req in self.current_batch if not _req.is_completed] # in the current batch keep the ones not completed
 
+        #now to fill the remaining gap, add many new requests from the pool
+        while not self.pool.empty() and len(self.current_batch) < Server.MAX_BATCH_SIZE:
+            self.current_batch.append(self.pool.get())
+        
+        return self.current_batch
 
     def serve(self):
+        self.current_batch = self._get_next_batch()
+        if not self.current_batch:
+            return False
 
-        while self.pool.empty() is False and len(self.current_batch) > 1:
-            request = self.pool.get()
-
-            if len(self.current_batch) < Server.MAX_BATCH_SIZE:
-                self.current_batch.append(request)
-            
-
-            for request in self.current_batch:
-                if request.is_completed:
-                    self.current_batch.remove(request)
-
-                if request.is_prefill:
-                    self.prefill(request)
-                else:
-                    self.decode(request)
+        for request in self.current_batch:
+            if request.is_prefill:
+                self.prefill(request)
+            else:
+                self.decode(request)
         
-        print("done serving all requests")
+        self._print_batch_state()
+        return True
         
         
 if __name__ == '__main__':
     server = Server()
-    server.add_request(Request(prompt = "california is"))
-    server.serve()
+    server.add_request(Request(id = 0, prompt = "football is the best"))
+
+    while server.serve():
+        pass
 
 
