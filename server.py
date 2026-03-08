@@ -1,9 +1,3 @@
-'''
-basic scaffold to implement
-1. have a pool of requests
-2. collect a batch(assume my gpu can do 10 requests max)
-3. if request.is_completed, then remove from the batch, and fetch a new from pool
-'''
 import torch
 
 from typing import List
@@ -25,7 +19,8 @@ class Request:
     tokens: List[int] = field(default_factory = list)
     kv_cache: KVCache = field(default_factory = lambda: KVCache(n_layers = QWEN3_0_6B["n_layers"])) 
     is_completed: bool = False
-    is_prefill: bool = True # do we need this or nah?
+    is_prefill: bool = True
+    current_pos: int = 0
 
 class Server:
     MAX_BATCH_SIZE = 10
@@ -62,9 +57,6 @@ class Server:
             add_thinking = False
         )
     
-    # def _tokenizer_decode(self, request: Request):
-    #     for token in request.tokens:
-    #         print(f"request {request.id} generated: {request.prompt} {self.tokenizer.decode([token])} \n")
     
     def add_request(self, request: Request):
         """adds a request in the pool"""
@@ -74,7 +66,8 @@ class Server:
         """this performs the prefill stage"""
         token_ids = self.tokenizer.encode(request.prompt)
         token_ids = torch.tensor(token_ids, device = "cuda").unsqueeze(0)
-        logits = self.model(token_ids, cache = request.kv_cache)
+        logits = self.model(token_ids, cache = request.kv_cache, current_pos = request.current_pos)
+        request.current_pos += token_ids.shape[1] # advance by prompt length
 
         next_token = torch.argmax(logits[:, -1], dim = -1, keepdim = True)
         token = next_token.item()
@@ -83,21 +76,18 @@ class Server:
 
         request.is_prefill = False
 
-        # self._tokenizer_decode(request)
-
         if token in [151645, 151643] or len(request.tokens) >= request.max_length:
             request.is_completed = True
 
     def decode(self, request: Request):
         """this performs one step of decode, feed only the last token and the cache handles history"""
-        logits = self.model(torch.tensor(request.tokens[-1], device = "cuda").unsqueeze(0).unsqueeze(0), cache = request.kv_cache)
+        logits = self.model(torch.tensor(request.tokens[-1], device = "cuda").unsqueeze(0).unsqueeze(0), cache = request.kv_cache, current_pos = request.current_pos)
+        request.current_pos += 1 # single position for single token
 
         next_token = torch.argmax(logits[:, -1], dim = -1, keepdim = True)
         token = next_token.item()
 
         request.tokens.append(token)
-
-        # self._tokenizer_decode(request)
 
         if token in [151645, 151643] or len(request.tokens) >= request.max_length:
             request.is_completed = True
@@ -128,7 +118,9 @@ class Server:
         
 if __name__ == '__main__':
     server = Server()
-    server.add_request(Request(id = 0, prompt = "football is the best"))
+    server.add_request(Request(id = 0, prompt = "explain what is AGI"))
+    server.add_request(Request(id = 1, prompt = "write a bit about vllm"))
+    server.add_request(Request(id = 2, prompt = "tell me something about sglang"))
 
     while server.serve():
         pass

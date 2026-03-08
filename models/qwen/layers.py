@@ -144,21 +144,18 @@ class Qwen3Model(nn.Module):
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
         self.cfg = cfg
-        self.current_pos = 0  # track current position in KV cache
 
-
-    def forward(self, in_idx, cache = None):
+    def forward(self, in_idx, cache = None, current_pos = 0):
         tok_embeds = self.tok_emb(in_idx)
         x = tok_embeds
 
         num_tokens = x.shape[1]
 
         if cache is not None:
-            pos_start = self.current_pos
+            pos_start = current_pos
             pos_end = pos_start + num_tokens
             mask = torch.triu(
                 torch.ones(pos_end, pos_end, device = x.device, dtype = torch.bool), diagonal = 1)[pos_start:pos_end, :pos_end]
-            self.current_pos = pos_end
         else:
             pos_start = 0 
             mask = torch.triu(torch.ones(num_tokens, num_tokens, device = x.device, dtype = torch.bool), diagonal = 1)
@@ -177,6 +174,3 @@ class Qwen3Model(nn.Module):
         x = self.final_norm(x)
         logits = self.out_head(x.to(self.cfg["dtype"]))
         return logits
-
-    def reset_kv_cache(self):
-        self.current_pos = 0
