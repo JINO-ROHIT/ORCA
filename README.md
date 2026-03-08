@@ -23,3 +23,8 @@ ORCA proposes -
 - [x] Implement iterative batching
 - [ ] Implement selective attention
 - [ ] Support additional model architectures beyond Qwen family
+- [ ] Add demo visualization
+
+
+![ORCA Demo](./artifacts/demo.gif)
+
