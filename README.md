@@ -17,3 +17,9 @@ ORCA proposes -
 
 1. iterative/continous batching - batching to add in new requests during a batch and exit a request when its done without waiting for the batch to be done. 
 2. selective attention - concat all the requests for linear passes, since the token interaction doesnot matter. for attention, split each request across the batch, perform attention and then concat them later. this way we make use of maximum computation. 
+
+
+### Roadmap
+- [x] Implement iterative batching
+- [ ] Implement selective attention
+- [ ] Support additional model architectures beyond Qwen family
