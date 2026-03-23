@@ -1,5 +1,7 @@
 ## ORCA - A Distributed Serving System for Transformer-Based Generative Models
 
+Edit: Limitation it doesnot batch the decode or the prefill instead still does it iteratively.
+
 this is my implementation for the [ORCA](https://www.usenix.org/conference/osdi22/presentation/yu) serving engine.
 
 this paper solves four major problems -
